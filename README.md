@@ -137,4 +137,7 @@ Los modelos se guardan en `global_models/`.
 ---
 
 ## Equipo
-Proyecto para la materia Cloud Computing — ITESM
+Antonio Noemi
+Braulio Martínez
+Leonardo de Regil
+Santiago Juarez
