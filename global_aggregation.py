@@ -1,6 +1,7 @@
 """
 global_aggregation.py — Cómputo del Modelo Global Federado
 ===========================================================
+Este script es ejecutado por el COORDINADOR (servidor federado).
 Recibe los pesos entrenados de cada cliente y produce el modelo global
 usando tres métodos de agregación:
 
@@ -26,6 +27,10 @@ import os
 import argparse
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
 from TheModel import build_model
 
 # ─────────────────────────────────────────────────────────────
@@ -384,6 +389,105 @@ def main():
     best = max(results, key=lambda m: results[m]["accuracy"])
     print(f"  ✅ Mejor método: {best}  "
           f"(Accuracy = {results[best]['accuracy']:.2%})\n")
+
+    # ── Gráficas comparativas ───────────────────────────────
+    if len(results) > 1:
+        plot_comparison(results, args.output_dir)
+
+
+# ─────────────────────────────────────────────────────────────
+# 8. Visualización comparativa de métodos
+# ─────────────────────────────────────────────────────────────
+def plot_comparison(results: dict, output_dir: str):
+    """
+    Genera dos gráficas comparativas de los métodos de agregación:
+      1. Barras: Accuracy y Loss por método
+      2. Matrices de confusión lado a lado
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    methods   = list(results.keys())
+    accs      = [results[m]["accuracy"] * 100 for m in methods]
+    losses    = [results[m]["loss"]           for m in methods]
+    colors    = ["#4C72B0", "#DD8452", "#55A868"][:len(methods)]
+
+    # ── Fig 1: Accuracy y Loss ───────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle("Comparativa de Métodos de Agregación Federada", fontsize=14, fontweight="bold")
+
+    # Accuracy
+    bars = axes[0].bar(methods, accs, color=colors, edgecolor="white", linewidth=1.5)
+    axes[0].set_title("Test Accuracy (%)", fontsize=12)
+    axes[0].set_ylabel("Accuracy (%)")
+    axes[0].set_ylim(max(0, min(accs) - 3), min(100, max(accs) + 3))
+    axes[0].grid(axis="y", alpha=0.3)
+    for bar, val in zip(bars, accs):
+        axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
+                     f"{val:.2f}%", ha="center", va="bottom", fontsize=11, fontweight="bold")
+
+    # Loss
+    bars2 = axes[1].bar(methods, losses, color=colors, edgecolor="white", linewidth=1.5)
+    axes[1].set_title("Test Loss", fontsize=12)
+    axes[1].set_ylabel("Sparse Categorical Crossentropy")
+    axes[1].set_ylim(0, max(losses) * 1.2)
+    axes[1].grid(axis="y", alpha=0.3)
+    for bar, val in zip(bars2, losses):
+        axes[1].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.002,
+                     f"{val:.4f}", ha="center", va="bottom", fontsize=11, fontweight="bold")
+
+    plt.tight_layout()
+    path1 = os.path.join(output_dir, "comparison_metrics.png")
+    plt.savefig(path1, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"  Gráfica guardada: {path1}")
+
+    # ── Fig 2: Matrices de confusión ─────────────────────────
+    (_, _), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+    x_test = x_test.astype(np.float32) / 255.0
+    x_test = np.expand_dims(x_test, axis=-1)
+    class_names = [str(i) for i in range(10)]
+
+    n = len(methods)
+    fig, axes = plt.subplots(1, n, figsize=(6 * n, 5))
+    if n == 1:
+        axes = [axes]
+    fig.suptitle("Matrices de Confusión — Modelos Globales", fontsize=14, fontweight="bold")
+
+    for ax, method, color in zip(axes, methods, colors):
+        weights_path = os.path.join(output_dir, f"global_weights_{method.lower()}.npz")
+        if not os.path.exists(weights_path):
+            ax.set_title(f"{method}\n(no disponible)")
+            continue
+
+        data = np.load(weights_path)
+        layer_keys = sorted([k for k in data.files if k.startswith("layer_")],
+                            key=lambda k: int(k.split("_")[1]))
+        global_w = [data[k] for k in layer_keys]
+
+        model = build_model()
+        _apply_weights(model, global_w)
+
+        y_pred = np.argmax(model.predict(x_test, verbose=0), axis=1)
+        cm = confusion_matrix(y_test, y_pred)
+
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                    xticklabels=class_names, yticklabels=class_names,
+                    ax=ax, cbar=False, annot_kws={"size": 7})
+        acc_val = results[method]["accuracy"] * 100
+        ax.set_title(f"{method}  —  {acc_val:.2f}%", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Predicho")
+        ax.set_ylabel("Real")
+
+        # Classification report en consola
+        print(f"\n{'─'*55}")
+        print(f"  Classification Report — {method}")
+        print(f"{'─'*55}")
+        print(classification_report(y_test, y_pred, target_names=class_names))
+
+    plt.tight_layout()
+    path2 = os.path.join(output_dir, "comparison_confusion_matrices.png")
+    plt.savefig(path2, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"  Gráfica guardada: {path2}")
 
 
 if __name__ == "__main__":
